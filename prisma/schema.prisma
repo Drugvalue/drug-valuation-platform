@@ -1,0 +1,47 @@
+// Prisma schema for DrugValue platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int       @id @default(autoincrement())
+  email     String    @unique
+  valuations Valuation[]
+  createdAt DateTime  @default(now())
+}
+
+model Drug {
+  id        Int       @id @default(autoincrement())
+  name      String
+  valuations Valuation[]
+  createdAt DateTime  @default(now())
+}
+
+model Valuation {
+  id             Int      @id @default(autoincrement())
+  drugId         Int
+  userId         Int
+  phase          String
+  indication     String
+  peakSales      Float
+  launchYear     Int
+  loeYear        Int
+  probability    Float
+  mechanismBonus Float
+  rnpv           Float
+  ptrs           Float
+  devCostPV      Float
+  comPV          Float
+  roi            Float
+  assumptions    Json?
+  createdAt      DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+  drug Drug @relation(fields: [drugId], references: [id])
+}

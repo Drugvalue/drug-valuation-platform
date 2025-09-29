@@ -18,6 +18,9 @@
   },
   "devDependencies": {
     "typescript": "5.1.6",
-    "prisma": "^5.0.0"
+    "prisma": "^5.0.0",
+    "@types/react": "^18.0.0",
+    "@types/node": "^18.0.0",
+    "@types/react-dom": "^18.0.0"
   }
 }

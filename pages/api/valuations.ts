@@ -1,30 +1,127 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { PrismaClient } from '@prisma/client';
 
-/*
- * API route to list all saved valuations.
- *
- * In a production deployment this handler queries a PostgreSQL database via
- * Prisma to retrieve persisted valuations along with their associated drug
- * and user metadata. For this starter implementation we guard against
- * method mis use and fall back to an empty array if the database is not
- * available.
- */
 const prisma = new PrismaClient();
 
+// Simple slug generator for shareable URLs
+function generateSlug() {
+  return Math.random().toString(36).substring(2, 10);
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'GET') {
-    res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
-  }
   try {
-    const valuations = await prisma.valuation.findMany({
-      include: { drug: true, user: true }
-    });
-    return res.status(200).json(valuations);
-  } catch (err) {
-    console.warn('Error fetching valuations', err);
-    // return empty list if the database is not configured
-    return res.status(200).json([]);
+    if (req.method === 'POST') {
+      const { userEmail, drug, inputs, outputs, mechanismNote } = req.body;
+
+      // Upsert or create user if email provided
+      let user = null;
+      if (userEmail) {
+        user = await prisma.user.upsert({
+          where: { email: userEmail },
+          create: { email: userEmail },
+          update: {},
+        });
+      }
+
+      // Find or create drug record
+      let drugRecord = null;
+      if (drug && drug.name && drug.indication && drug.phase) {
+        const existing = await prisma.drug.findFirst({
+          where: {
+            name: drug.name,
+            indication: drug.indication,
+            phase: drug.phase,
+          },
+        });
+        if (existing) {
+          drugRecord = existing;
+        } else {
+          drugRecord = await prisma.drug.create({
+            data: {
+              name: drug.name,
+              indication: drug.indication,
+              phase: drug.phase,
+              mechanism: drug.mechanism ?? null,
+            },
+          });
+        }
+      }
+
+      const shareSlug = generateSlug();
+
+      const valuation = await prisma.valuation.create({
+        data: {
+          user: user ? { connect: { id: user.id } } : undefined,
+          drug: drugRecord ? { connect: { id: drugRecord.id } } : undefined,
+          inputs: inputs || {},
+          outputs: outputs || {},
+          mechanismNote: mechanismNote || null,
+          shareSlug,
+        },
+      });
+
+      return res.status(201).json({ id: valuation.id, shareSlug: valuation.shareSlug });
+    }
+
+    if (req.method === 'GET') {
+      const { id, slug, userEmail, drugId } = req.query;
+
+      // Get by id
+      if (id) {
+        const valuation = await prisma.valuation.findUnique({
+          where: { id: Number(id) },
+        });
+        if (!valuation) {
+          return res.status(404).json({ error: 'Not found' });
+        }
+        return res.status(200).json(valuation);
+      }
+
+      // Get by shareSlug
+      if (slug) {
+        const valuation = await prisma.valuation.findUnique({
+          where: { shareSlug: String(slug) },
+        });
+        if (!valuation) {
+          return res.status(404).json({ error: 'Not found' });
+        }
+        return res.status(200).json(valuation);
+      }
+
+      // List valuations by userEmail
+      if (userEmail) {
+        const list = await prisma.valuation.findMany({
+          where: {
+            user: {
+              email: String(userEmail),
+            },
+          },
+          include: { drug: true },
+        });
+        return res.status(200).json(list);
+      }
+
+      // List valuations by drugId
+      if (drugId) {
+        const list = await prisma.valuation.findMany({
+          where: { drugId: Number(drugId) },
+          include: { drug: true },
+        });
+        return res.status(200).json(list);
+      }
+
+      // Return all valuations (limited)
+      const list = await prisma.valuation.findMany({
+        include: { drug: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      return res.status(200).json(list);
+    }
+
+    res.setHeader('Allow', ['GET', 'POST']);
+    return res.status(405).end(`Method ${req.method} Not Allowed`);
+  } catch (error) {
+    console.error('Error in /api/valuations:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }

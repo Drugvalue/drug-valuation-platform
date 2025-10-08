@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 
 /**
- * Home page for the Drug Valuation Platform.
+ * Drug Valuation Tool home page.
  *
  * This component implements a complete risk‑adjusted valuation model that updates
  * in real time as the user adjusts inputs. It estimates the probability of
@@ -12,7 +12,8 @@ import { useState, useMemo } from 'react';
  * model. The result is a set of outputs: PTRS (probability × mechanism
  * multiplier), present value of development costs after tax, commercial PV
  * (given success), rNPV and ROI. All currency outputs are rounded to
- * whole numbers for clarity.
+ * whole numbers for clarity.  Additional helper functions allow saving,
+ * loading, sharing and exporting valuations via API endpoints.
  */
 export default function Home() {
   // Core drug properties
@@ -32,12 +33,18 @@ export default function Home() {
   // Mechanistic properties
   const [potency, setPotency] = useState<number>(50); // IC50 in nM
   const [selectivity, setSelectivity] = useState<number>(10); // fold selectivity over off targets
-  const [halfLife, setHalfLife] = useState<number>(12); // in hours
-  const [molecularWeight, setMolecularWeight] = useState<number>(400); // in Daltons
+  const [halfLife, setHalfLife] = useState<number>(12); // hours
+  const [molecularWeight, setMolecularWeight] = useState<number>(400); // Daltons
   const [logP, setLogP] = useState<number>(2.0); // lipophilicity
-  const [bioavailability, setBioavailability] = useState<number>(0.5); // fraction absorbed (0–1)
-  const [targetValidation, setTargetValidation] = useState<number>(0.5); // evidence strength (0–1)
-  const [targetNovelty, setTargetNovelty] = useState<number>(0.5); // novelty (0–1, higher = riskier)
+  const [bioavailability, setBioavailability] = useState<number>(0.5); // 0–1
+  const [targetValidation, setTargetValidation] = useState<number>(0.5); // 0–1
+  const [targetNovelty, setTargetNovelty] = useState<number>(0.5); // 0–1
+
+  // Save/load/share state
+  const [shareLink, setShareLink] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [loadId, setLoadId] = useState<string>('');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Lookup tables for development costs and base approval probabilities by phase
   const devCosts: Record<string, number> = {
@@ -46,7 +53,7 @@ export default function Home() {
     'Phase II': 100,
     'Phase III': 200,
     NDA: 20,
-    Approved: 0
+    Approved: 0,
   };
   const baseProbabilities: Record<string, number> = {
     Preclinical: 0.12,
@@ -54,7 +61,7 @@ export default function Home() {
     'Phase II': 0.14,
     'Phase III': 0.4,
     NDA: 0.85,
-    Approved: 1.0
+    Approved: 1.0,
   };
 
   // Mechanism bonus computation encapsulated in a memoized function
@@ -63,36 +70,28 @@ export default function Home() {
     // potency: lower is better
     if (potency < 10) bonus += 0.1;
     else if (potency > 100) bonus -= 0.1;
-
     // selectivity: higher fold selectivity is better
     if (selectivity > 30) bonus += 0.1;
     else if (selectivity < 5) bonus -= 0.1;
-
     // half‑life: extreme half‑lives are undesirable
     if (halfLife > 24) bonus -= 0.05;
     else if (halfLife < 2) bonus -= 0.05;
-
     // molecular weight: values above ~500 Da often reduce oral bioavailability
     if (molecularWeight > 500) bonus -= 0.05;
     else if (molecularWeight < 200) bonus += 0.05;
-
     // logP: ideal lipophilicity between 1 and 3
     if (logP >= 1 && logP <= 3) bonus += 0.1;
     else bonus -= 0.05;
-
     // bioavailability: higher is better
     if (bioavailability > 0.5) bonus += 0.1;
     else if (bioavailability < 0.2) bonus -= 0.1;
-
     // target validation: strong evidence boosts likelihood
     if (targetValidation > 0.7) bonus += 0.2;
     else if (targetValidation < 0.3) bonus -= 0.1;
-
     // target novelty: high novelty penalised; familiarity rewarded
     if (targetNovelty > 0.7) bonus -= 0.1;
     else if (targetNovelty < 0.3) bonus += 0.1;
-
-    // Clamp the bonus between 0.5× and 2.0× to avoid extreme effects
+    // Clamp between 0.5× and 2.0×
     return Math.min(2.0, Math.max(0.5, bonus));
   }, [potency, selectivity, halfLife, molecularWeight, logP, bioavailability, targetValidation, targetNovelty]);
 
@@ -102,12 +101,11 @@ export default function Home() {
   const devCostPV = devCost * (1 - taxRate);
   const currentYear = new Date().getFullYear();
 
-  // Compute the present value of net commercial cash flows assuming success
+  // Present value of net commercial cash flows assuming success
   const commercialPV = useMemo(() => {
-    // treat each year from launch to LOE as constant peak sales
     if (launchYear >= loeYear) return 0;
     let pv = 0;
-    const netMargin = 1 - cogs - commercialSpend - workingCapital; // pre‑tax operating margin
+    const netMargin = 1 - cogs - commercialSpend - workingCapital;
     for (let year = launchYear; year < loeYear; year++) {
       const t = year - currentYear;
       const cashFlow = peakSales * netMargin * (1 - taxRate);
@@ -129,6 +127,142 @@ export default function Home() {
   const handleLoeYearChange = (year: number) => {
     setLoeYear(year);
     if (year <= launchYear) setLaunchYear(year - 1);
+  };
+
+  // Helper: gather current inputs
+  const getInputs = () => ({
+    peakSales,
+    launchYear,
+    loeYear,
+    discountRate,
+    taxRate,
+    cogs,
+    commercialSpend,
+    workingCapital,
+    potency,
+    selectivity,
+    halfLife,
+    molecularWeight,
+    logP,
+    bioavailability,
+    targetValidation,
+    targetNovelty,
+    phase,
+    indication,
+  });
+
+  // Helper: gather current outputs
+  const getOutputs = () => ({
+    mechanismBonus,
+    ptrs,
+    devCostPV,
+    commercialPV,
+    rnpv,
+    roi,
+  });
+
+  // Save current valuation via API
+  const saveValuation = async () => {
+    setSaveError(null);
+    try {
+      const res = await fetch('/api/valuations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputs: getInputs(), outputs: getOutputs() }),
+      });
+      if (!res.ok) throw new Error(`Failed: ${res.status}`);
+      const data = await res.json();
+      setShareLink(`${window.location.origin}/api/valuation/share/${data.shareSlug}`);
+    } catch (e: any) {
+      setSaveError(e.message || 'Error saving valuation');
+    }
+  };
+
+  // Load valuation by id or slug
+  const loadValuation = async () => {
+    setLoadError(null);
+    try {
+      const res = await fetch(`/api/valuation/${loadId}`);
+      if (!res.ok) throw new Error(`Failed: ${res.status}`);
+      const data = await res.json();
+      const { inputs } = data;
+      setPeakSales(inputs.peakSales);
+      setLaunchYear(inputs.launchYear);
+      setLoeYear(inputs.loeYear);
+      setDiscountRate(inputs.discountRate);
+      setTaxRate(inputs.taxRate);
+      setCogs(inputs.cogs);
+      setCommercialSpend(inputs.commercialSpend);
+      setWorkingCapital(inputs.workingCapital);
+      setPotency(inputs.potency);
+      setSelectivity(inputs.selectivity);
+      setHalfLife(inputs.halfLife);
+      setMolecularWeight(inputs.molecularWeight);
+      setLogP(inputs.logP);
+      setBioavailability(inputs.bioavailability);
+      setTargetValidation(inputs.targetValidation);
+      setTargetNovelty(inputs.targetNovelty);
+      setPhase(inputs.phase);
+      setIndication(inputs.indication);
+      setShareLink(`${window.location.origin}/api/valuation/share/${data.shareSlug}`);
+    } catch (e: any) {
+      setLoadError(e.message || 'Error loading valuation');
+    }
+  };
+
+  // Export current valuation as JSON file
+  const exportJSON = () => {
+    const blob = new Blob([JSON.stringify({ inputs: getInputs(), outputs: getOutputs() }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `valuation_${Date.now()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Export current valuation as CSV file
+  const exportCSV = () => {
+    const inputs = getInputs();
+    const outputs = getOutputs();
+    const rows = [[
+      new Date().toISOString(),
+      inputs.phase,
+      inputs.indication,
+      inputs.peakSales,
+      inputs.launchYear,
+      inputs.loeYear,
+      inputs.discountRate,
+      inputs.taxRate,
+      inputs.cogs,
+      inputs.commercialSpend,
+      inputs.workingCapital,
+      inputs.potency,
+      inputs.selectivity,
+      inputs.halfLife,
+      inputs.molecularWeight,
+      inputs.logP,
+      inputs.bioavailability,
+      inputs.targetValidation,
+      inputs.targetNovelty,
+      outputs.mechanismBonus,
+      outputs.ptrs,
+      outputs.devCostPV,
+      outputs.commercialPV,
+      outputs.rnpv,
+      outputs.roi,
+    ]];
+    const header = [
+      'timestamp','phase','indication','peakSales','launchYear','loeYear','discountRate','taxRate','cogs','commercialSpend','workingCapital','potency','selectivity','halfLife','molecularWeight','logP','bioavailability','targetValidation','targetNovelty','mechanismBonus','ptrs','devCostPV','commercialPV','rnpv','roi',
+    ];
+    const csvContent = [header, ...rows].map(row => row.join(',')).join('\n');
+    const blob2 = new Blob([csvContent], { type: 'text/csv' });
+    const url2 = URL.createObjectURL(blob2);
+    const link2 = document.createElement('a');
+    link2.href = url2;
+    link2.download = `valuation_${Date.now()}.csv`;
+    link2.click();
+    URL.revokeObjectURL(url2);
   };
 
   return (
@@ -366,7 +500,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Results */}
+      {/* Outputs */}
       <section style={{ marginBottom: '1rem' }}>
         <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Outputs</h2>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
@@ -376,6 +510,36 @@ export default function Home() {
           <div><strong>Commercial PV (given success):</strong> ${Math.round(commercialPV)}M</div>
           <div><strong>rNPV:</strong> ${Math.round(rnpv)}M</div>
           <div><strong>ROI:</strong> {roi}%</div>
+        </div>
+      </section>
+
+      {/* Save, load, share & export */}
+      <section style={{ marginBottom: '1rem' }}>
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Save, Load, Share & Export</h2>
+        <div style={{ marginBottom: '0.5rem' }}>
+          <button onClick={saveValuation} style={{ padding: '0.4rem', marginRight: '0.5rem' }}>Save Valuation</button>
+          {saveError && <span style={{ color: 'red' }}>{saveError}</span>}
+        </div>
+        {shareLink && (
+          <div style={{ marginBottom: '0.5rem' }}>
+            <span><strong>Share URL:</strong> </span>
+            <a href={shareLink} target="_blank" rel="noopener noreferrer">{shareLink}</a>
+          </div>
+        )}
+        <div style={{ marginBottom: '0.5rem' }}>
+          <input
+            type="text"
+            placeholder="Enter ID or slug"
+            value={loadId}
+            onChange={(e) => setLoadId(e.target.value)}
+            style={{ padding: '0.4rem', marginRight: '0.5rem' }}
+          />
+          <button onClick={loadValuation} style={{ padding: '0.4rem' }}>Load Valuation</button>
+          {loadError && <span style={{ color: 'red' }}>{loadError}</span>}
+        </div>
+        <div>
+          <button onClick={exportJSON} style={{ padding: '0.4rem', marginRight: '0.5rem' }}>Export JSON</button>
+          <button onClick={exportCSV} style={{ padding: '0.4rem' }}>Export CSV</button>
         </div>
       </section>
 

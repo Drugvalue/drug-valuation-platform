@@ -34,6 +34,8 @@ model Valuation {
   userId        Int?
   drugId        Int?
   inputs        Json
+  metadata Json?
+  updatedAt DateTime @updatedAt
   outputs       Json
   mechanismNote String?   // optional free-text notes
   shareSlug     String    @unique

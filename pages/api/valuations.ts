@@ -11,7 +11,8 @@ function generateSlug() {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     if (req.method === 'POST') {
-      const { userEmail, drug, inputs, outputs, mechanismNote } = req.body;
+      const { userEmail, drug, inputs, outputs, mechanismNote, metadata } = req.body;
+      
 
       // Upsert or create user if email provided
       let user = null;
@@ -55,7 +56,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           drug: drugRecord ? { connect: { id: drugRecord.id } } : undefined,
           inputs: inputs || {},
           outputs: outputs || {},
-          mechanismNote: mechanismNote || null,
+          
+              metadata: metadata || {},
+mechanismNote: mechanismNote || null,
           shareSlug,
         },
       });

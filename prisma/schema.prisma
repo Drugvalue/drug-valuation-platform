@@ -37,7 +37,13 @@ model Valuation {
   metadata Json?
   updatedAt DateTime @updatedAt
   outputs       Json
-  mechanismNote String?   // optional free-text notes
+    nctId String?
+  loeYear Int?
+  royaltyMin Float?
+  royaltyMax Float?
+  baselinePos Float?
+  mechanisticPos Float?
+mechanismNote String?   // optional free-text notes
   shareSlug     String    @unique
   createdAt     DateTime  @default(now())
 

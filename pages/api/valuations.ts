@@ -12,7 +12,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     if (req.method === 'POST') {
       const { userEmail, drug, inputs, outputs, mechanismNote, metadata } = req.body;
-      
+      const { nctId, loeYear, royaltyMin, royaltyMax, baselinePos, mechanisticPos } = req.body;
+
 
       // Upsert or create user if email provided
       let user = null;
@@ -58,8 +59,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           outputs: outputs || {},
           
               metadata: metadata || {},
+            nctId: nctId || null,
+  loeYear: loeYear !== undefined ? Number(loeYear) : null,
+  royaltyMin: royaltyMin !== undefined ? Number(royaltyMin) : null,
+  royaltyMax: royaltyMax !== undefined ? Number(royaltyMax) : null,
+  baselinePos: baselinePos !== undefined ? Number(baselinePos) : null,
+  mechanisticPos: mechanisticPos !== undefined ? Number(mechanisticPos) : null,
+
 mechanismNote: mechanismNote || null,
-            shareSlug: shareslug,
+            shareSlug: shareSlug,
         },
       });
 

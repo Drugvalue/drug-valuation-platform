@@ -65,6 +65,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   royaltyMax: royaltyMax !== undefined ? Number(royaltyMax) : null,
   baselinePos: baselinePos !== undefined ? Number(baselinePos) : null,
   mechanisticPos: mechanisticPos !== undefined ? Number(mechanisticPos) : null,
+shareSlug: shareSlug,
 
 mechanismNote: mechanismNote || null,
             shareSlug: shareSlug,

@@ -174,18 +174,16 @@ const [mechanisticPos, setMechanisticPos] = useState<number>(0);
       const res = await fetch('/api/valuations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs: getInputs(), outputs: getOutputs() }),
-      body: JSON.stringify({
-  inputs: getInputs(),
-  outputs: getOutputs(),
-  nctId,
-  loeYear,
-  royaltyMin,
-  royaltyMax,
-  baselinePos,
-  mechanisticPos,
-}),
-
+        body: JSON.stringify({
+          inputs: getInputs(),
+          outputs: getOutputs(),
+          nctId,
+          loeYear,
+          royaltyMin,
+          royaltyMax,
+          baselinePos,
+          mechanisticPos,
+        }),
       });
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
       const data = await res.json();

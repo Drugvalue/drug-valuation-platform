@@ -11,9 +11,20 @@ function generateSlug() {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     if (req.method === 'POST') {
-      const { userEmail, drug, inputs, outputs, mechanismNote, metadata } = req.body;
-      const { nctId, loeYear, royaltyMin, royaltyMax, baselinePos, mechanisticPos } = req.body;
-
+      const {
+        userEmail,
+        drug,
+        inputs,
+        outputs,
+        mechanismNote,
+        metadata,
+        nctId,
+        loeYear,
+        royaltyMin,
+        royaltyMax,
+        baselinePos,
+        mechanisticPos,
+      } = req.body;
 
       // Upsert or create user if email provided
       let user = null;
@@ -51,24 +62,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const shareSlug = generateSlug();
 
+      // Create the valuation with all the optional fields
       const valuation = await prisma.valuation.create({
         data: {
           user: user ? { connect: { id: user.id } } : undefined,
           drug: drugRecord ? { connect: { id: drugRecord.id } } : undefined,
           inputs: inputs || {},
           outputs: outputs || {},
-          
-              metadata: metadata || {},
-            nctId: nctId || null,
-  loeYear: loeYear !== undefined ? Number(loeYear) : null,
-  royaltyMin: royaltyMin !== undefined ? Number(royaltyMin) : null,
-  royaltyMax: royaltyMax !== undefined ? Number(royaltyMax) : null,
-  baselinePos: baselinePos !== undefined ? Number(baselinePos) : null,
-  mechanisticPos: mechanisticPos !== undefined ? Number(mechanisticPos) : null,
-shareSlug: shareSlug,
-
-mechanismNote: mechanismNote || null,
-            shareSlug: shareSlug,
+          metadata: metadata || {},
+          nctId: nctId || null,
+          loeYear: loeYear !== undefined ? Number(loeYear) : null,
+          royaltyMin: royaltyMin !== undefined ? Number(royaltyMin) : null,
+          royaltyMax: royaltyMax !== undefined ? Number(royaltyMax) : null,
+          baselinePos: baselinePos !== undefined ? Number(baselinePos) : null,
+          mechanisticPos: mechanisticPos !== undefined ? Number(mechanisticPos) : null,
+          mechanismNote: mechanismNote || null,
+          shareSlug: shareSlug,
         },
       });
 
@@ -78,7 +87,7 @@ mechanismNote: mechanismNote || null,
     if (req.method === 'GET') {
       const { id, slug, userEmail, drugId } = req.query;
 
-      // Get by id
+      // Get by numeric ID
       if (id) {
         const valuation = await prisma.valuation.findUnique({
           where: { id: Number(id) },
@@ -122,7 +131,7 @@ mechanismNote: mechanismNote || null,
         return res.status(200).json(list);
       }
 
-      // Return all valuations (limited)
+      // Return all valuations (most recent first)
       const list = await prisma.valuation.findMany({
         include: { drug: true },
         orderBy: { createdAt: 'desc' },
@@ -133,7 +142,7 @@ mechanismNote: mechanismNote || null,
     res.setHeader('Allow', ['GET', 'POST']);
     return res.status(405).end(`Method ${req.method} Not Allowed`);
   } catch (error) {
-    console.error('Error in /api/valuations:', error);
+    console.error('Error in /api/valuations!', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 }

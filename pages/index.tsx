@@ -29,6 +29,11 @@ export default function Home() {
   const [cogs, setCogs] = useState<number>(0.2); // 20% cost of goods
   const [commercialSpend, setCommercialSpend] = useState<number>(0.3); // 30% SG&A
   const [workingCapital, setWorkingCapital] = useState<number>(0.05); // 5% working capital burden
+const [nctId, setNctId] = useState<string>('');
+const [royaltyMin, setRoyaltyMin] = useState<number>(5);
+const [royaltyMax, setRoyaltyMax] = useState<number>(12);
+const [baselinePos, setBaselinePos] = useState<number>(0);
+const [mechanisticPos, setMechanisticPos] = useState<number>(0);
 
   // Mechanistic properties
   const [potency, setPotency] = useState<number>(50); // IC50 in nM
@@ -44,6 +49,7 @@ export default function Home() {
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [loadId, setLoadId] = useState<string>('');
+  
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // Lookup tables for development costs and base approval probabilities by phase
@@ -169,6 +175,17 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inputs: getInputs(), outputs: getOutputs() }),
+      body: JSON.stringify({
+  inputs: getInputs(),
+  outputs: getOutputs(),
+  nctId,
+  loeYear,
+  royaltyMin,
+  royaltyMax,
+  baselinePos,
+  mechanisticPos,
+}),
+
       });
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
       const data = await res.json();
@@ -187,6 +204,13 @@ export default function Home() {
       const data = await res.json();
       const { inputs } = data;
       setPeakSales(inputs.peakSales);
+      setNctId(data.nctId || '');
+setLoeYear(data.loeYear || loeYear);
+setRoyaltyMin(data.royaltyMin || 5);
+setRoyaltyMax(data.royaltyMax || 12);
+setBaselinePos(data.baselinePos || 0);
+setMechanisticPos(data.mechanisticPos || 0);
+
       setLaunchYear(inputs.launchYear);
       setLoeYear(inputs.loeYear);
       setDiscountRate(inputs.discountRate);
@@ -384,6 +408,23 @@ export default function Home() {
             style={{ width: '100%', padding: '0.4rem' }}
           />
         </div>
+        <div>
+  <label>NCT ID</label>
+  <input type="text" value={nctId} onChange={(e) => setNctId(e.target.value)} />
+</div>
+<div>
+  <label>LOE year</label>
+  <input type="number" value={loeYear} onChange={(e) => setLoeYear(Number(e.target.value))} />
+</div>
+<div>
+  <label>Royalty Min (%)</label>
+  <input type="number" value={royaltyMin} onChange={(e) => setRoyaltyMin(Number(e.target.value))} />
+</div>
+<div>
+  <label>Royalty Max (%)</label>
+  <input type="number" value={royaltyMax} onChange={(e) => setRoyaltyMax(Number(e.target.value))} />
+</div>
+
         <div>
           <label htmlFor="workingCapital">Working capital burden</label>
           <input

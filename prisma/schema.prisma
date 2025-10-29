@@ -35,7 +35,7 @@ model Valuation {
   drugId        Int?
   inputs        Json
   metadata Json?
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt @default(now())
   outputs       Json
     nctId String?
   loeYear Int?

@@ -168,6 +168,45 @@ const [mechanisticPos, setMechanisticPos] = useState<number>(0);
   });
 
   // Save current valuation via API
+  // --- helpers: LOE & Trial fetchers ---
+const getLoeFromApi = async (drugName: string) => {
+  if (!drugName || !drugName.trim()) {
+    alert('Enter a Drug Name first.');
+    return;
+  }
+  try {
+    const res = await fetch(`/api/loe/${encodeURIComponent(drugName.trim())}`);
+    const data = await res.json();
+    if (res.ok && typeof data.loeYear === 'number') {
+      setLoeYear(data.loeYear);
+    } else {
+      alert('LOE lookup returned no year.');
+    }
+  } catch {
+    alert('LOE lookup failed. Try again.');
+  }
+};
+
+const getTrialFromApi = async (nct: string) => {
+  if (!nct || !nct.trim()) {
+    alert('Enter an NCT ID first.');
+    return;
+  }
+  try {
+    const res = await fetch(`/api/trial/${encodeURIComponent(nct.trim())}`);
+    // When the API returns real fields, set them here:
+    // e.g., setPhase(data.phase); setSponsor(data.sponsor);
+    if (res.ok) {
+      alert('Trial route reachable (data integration coming next).');
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data?.error ?? 'Trial lookup failed.');
+    }
+  } catch {
+    alert('Trial lookup failed. Try again.');
+  }
+};
+
   const saveValuation = async () => {
     setSaveError(null);
     try {
@@ -343,17 +382,25 @@ setMechanisticPos(data.mechanisticPos || 0);
             style={{ width: '100%', padding: '0.4rem' }}
           />
         </div>
-        <div>
-          <label htmlFor="loeYear">LOE year</label>
-          <input
-            id="loeYear"
-            type="number"
-            min={launchYear + 1}
-            value={loeYear}
-            onChange={(e) => handleLoeYearChange(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
+       <div>
+  <label htmlFor="loeYear">LOE year</label>
+  <input
+    id="loeYear"
+    type="number"
+    min={launchYear + 1}
+    value={loeYear}
+    onChange={(e) => handleLoeYearChange(Number(e.target.value))}
+    style={{ width: '100%', padding: '0.4rem' }}
+  />
+  <button
+    type="button"
+    onClick={() => getLoeFromApi(drugName)}
+    style={{ marginTop: '0.5rem', padding: '0.4rem' }}
+  >
+    Get LOE
+  </button>
+</div>
+
         <div>
           <label htmlFor="discountRate">Discount rate</label>
           <input
@@ -573,6 +620,14 @@ setMechanisticPos(data.mechanisticPos || 0);
             onChange={(e) => setLoadId(e.target.value)}
             style={{ padding: '0.4rem', marginRight: '0.5rem' }}
           />
+          <button
+  type="button"
+  onClick={() => getTrialFromApi(nctId)}
+  style={{ marginLeft: 8 }}
+>
+  Fetch Trial
+</button>
+
           <button onClick={loadValuation} style={{ padding: '0.4rem' }}>Load Valuation</button>
           {loadError && <span style={{ color: 'red' }}>{loadError}</span>}
         </div>

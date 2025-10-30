@@ -456,7 +456,9 @@ setMechanisticPos(data.mechanisticPos || 0);
         <div>
   <label>NCT ID</label>
   <input type="text" value={nctId} onChange={(e) => setNctId(e.target.value)} />
-</div>
+         <button type="button" onClick={() => getTrialFromApi(nctId)} style={{ marginLeft: '0.5rem', padding: '0.4rem' }}>
+    Fetch Trial
+  </button>
 <div>
   <label>LOE year</label>
   <input type="number" value={loeYear} onChange={(e) => setLoeYear(Number(e.target.value))} />

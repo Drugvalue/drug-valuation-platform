@@ -1,20 +1,14 @@
 import { useState, useMemo } from 'react'
 
 /**
- * Drug Valuation Tool home page.
+ * Drug Valuation Tool home page (updated).
  *
- * This component implements a complete risk‑adjusted valuation model that updates
- * in real time as the user adjusts inputs. It estimates the probability of
- * success based on clinical phase and a simple mechanism score derived from
- * preclinical properties such as potency, selectivity, half‑life and target
- * validation. Commercial parameters including peak sales, launch year,
- * loss‑of‑exclusivity (LOE) and cost assumptions feed a discounted cash flow
- * model. The result is a set of outputs: PTRS (probability × mechanism
- * multiplier), present value of development costs after tax, commercial PV
- * (given success), rNPV and ROI. All currency outputs are rounded to
- * whole numbers for clarity.  Additional helper functions allow saving,
- * loading, sharing and exporting valuations via API endpoints.  This version
- * includes helper inputs for NCT ID, LOE year lookup and royalty ranges.
+ * This version builds on the earlier implementation by wiring the helper API
+ * responses directly into the form. Clicking “Get LOE” now calls the LOE
+ * endpoint and fills the LOE year, and clicking “Fetch Trial” calls the
+ * ClinicalTrials.gov helper and updates the phase and baseline PoS using the
+ * returned trial phase. Royalty range inputs, mechanistic properties and
+ * valuation calculations remain the same.
  */
 export default function Home() {
   // Core drug properties
@@ -169,15 +163,14 @@ export default function Home() {
   })
 
   // --- helpers: LOE & Trial fetchers ---
-  const getLoeFromApi = async (drugName: string) => {
-    // Use indication as a proxy for drug name; customise as needed
-    const name = drugName && drugName.trim()
-    if (!name) {
+  const getLoeFromApi = async (name: string) => {
+    const drug = name && name.trim()
+    if (!drug) {
       alert('Enter a drug name or indication first.')
       return
     }
     try {
-      const res = await fetch(`/api/loe/${encodeURIComponent(name)}`)
+      const res = await fetch(`/api/loe/${encodeURIComponent(drug)}`)
       const data = await res.json()
       if (res.ok && typeof data.loeYear === 'number') {
         setLoeYear(data.loeYear)
@@ -197,12 +190,18 @@ export default function Home() {
     }
     try {
       const res = await fetch(`/api/trial/${encodeURIComponent(id)}`)
-      // When the API returns real fields, set them here:
-      // e.g., setPhase(data.phase); setIndication(data.sponsor);
+      const data = await res.json()
       if (res.ok) {
-        alert('Trial route reachable (data integration coming next).')
+        // Update phase if returned
+        if (data.phase) {
+          setPhase(data.phase)
+          // Update baseline PoS according to the base probabilities
+          setBaselinePos(baseProbabilities[data.phase] ?? 0)
+        }
+        // Optionally update indication or other fields if provided
+        // For example: setIndication(data.sponsor)
+        alert('Trial data loaded.')
       } else {
-        const data = await res.json().catch(() => ({}))
         alert(data?.error ?? 'Trial lookup failed.')
       }
     } catch {

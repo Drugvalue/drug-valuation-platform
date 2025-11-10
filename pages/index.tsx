@@ -1,53 +1,59 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react';
+import { Toast, ToastKind } from '../components/Toast';
+import { pvOwner, pvLicensor } from '../lib/cashflow';
+import { royaltyAtYear, averageRoyalty } from '../lib/royalty';
 
-/**
- * Drug Valuation Tool home page (updated).
- *
- * This version builds on the earlier implementation by wiring the helper API
- * responses directly into the form. Clicking “Get LOE” now calls the LOE
- * endpoint and fills the LOE year, and clicking “Fetch Trial” calls the
- * ClinicalTrials.gov helper and updates the phase and baseline PoS using the
- * returned trial phase. Royalty range inputs, mechanistic properties and
- * valuation calculations remain the same.
- */
+type Role = 'OWNER' | 'LICENSOR';
+
 export default function Home() {
-  // Core drug properties
-  const [phase, setPhase] = useState<string>('Preclinical')
-  const [indication, setIndication] = useState<string>('Oncology')
-  const [peakSales, setPeakSales] = useState<number>(500) // in millions
-  const [launchYear, setLaunchYear] = useState<number>(new Date().getFullYear() + 5)
-  const [loeYear, setLoeYear] = useState<number>(launchYear + 10)
+  // Core setup
+  const [phase, setPhase] = useState('Preclinical');
+  const [indication, setIndication] = useState('Oncology');
+  const [role, setRole] = useState<Role>('OWNER');
 
-  // Financial assumptions
-  const [discountRate, setDiscountRate] = useState<number>(0.1) // 10%
-  const [taxRate, setTaxRate] = useState<number>(0.21) // 21%
-  const [cogs, setCogs] = useState<number>(0.2) // 20% cost of goods
-  const [commercialSpend, setCommercialSpend] = useState<number>(0.3) // 30% SG&A
-  const [workingCapital, setWorkingCapital] = useState<number>(0.05) // 5% working capital burden
-  // Additional inputs for trial and royalties
-  const [nctId, setNctId] = useState<string>('')
-  const [royaltyMin, setRoyaltyMin] = useState<number>(5)
-  const [royaltyMax, setRoyaltyMax] = useState<number>(12)
-  const [baselinePos, setBaselinePos] = useState<number>(0)
-  const [mechanisticPos, setMechanisticPos] = useState<number>(0)
+  // Commercial & financials
+  const [peakSales, setPeakSales] = useState(500);
+  const [launchYear, setLaunchYear] = useState(new Date().getFullYear() + 5);
+  const [loeYear, setLoeYear] = useState(launchYear + 10);
+  const [discountRate, setDiscountRate] = useState(0.1);
+  const [taxRate, setTaxRate] = useState(0.21);
+  const [cogs, setCogs] = useState(0.2);
+  const [commercialSpend, setCommercialSpend] = useState(0.3);
+  const [workingCapital, setWorkingCapital] = useState(0.05);
+  const [royaltyMin, setRoyaltyMin] = useState(5);
+  const [royaltyMax, setRoyaltyMax] = useState(12);
+  const [royaltyRampYears, setRoyaltyRampYears] = useState(3);
 
-  // Mechanistic properties
-  const [potency, setPotency] = useState<number>(50) // IC50 in nM
-  const [selectivity, setSelectivity] = useState<number>(10) // fold selectivity over off targets
-  const [halfLife, setHalfLife] = useState<number>(12) // hours
-  const [molecularWeight, setMolecularWeight] = useState<number>(400) // Daltons
-  const [logP, setLogP] = useState<number>(2.0) // lipophilicity
-  const [bioavailability, setBioavailability] = useState<number>(0.5) // 0–1
-  const [targetValidation, setTargetValidation] = useState<number>(0.5) // 0–1
-  const [targetNovelty, setTargetNovelty] = useState<number>(0.5) // 0–1
+  // Mechanistic
+  const [potency, setPotency] = useState(50);
+  const [selectivity, setSelectivity] = useState(10);
+  const [halfLife, setHalfLife] = useState(12);
+  const [molecularWeight, setMolecularWeight] = useState(400);
+  const [logP, setLogP] = useState(2.0);
+  const [bioavailability, setBioavailability] = useState(0.5);
+  const [targetValidation, setTargetValidation] = useState(0.5);
+  const [targetNovelty, setTargetNovelty] = useState(0.5);
 
-  // Save/load/share state
-  const [shareLink, setShareLink] = useState<string | null>(null)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [loadId, setLoadId] = useState<string>('')
-  const [loadError, setLoadError] = useState<string | null>(null)
+  // Other
+  const [nctId, setNctId] = useState('');
+  const [trialSponsor, setTrialSponsor] = useState<string | null>(null);
+  const [trialStartDate, setTrialStartDate] = useState<string | null>(null);
+  const [loeSource, setLoeSource] = useState<string | null>(null);
 
-  // Lookup tables for development costs and base approval probabilities by phase
+  const [baselinePos, setBaselinePos] = useState(0);
+  const [mechanisticPos, setMechanisticPos] = useState(0);
+  const [shareLink, setShareLink] = useState<string | null>(null);
+
+  // Toasts
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [toastKind, setToastKind] = useState<ToastKind>('info');
+  const notify = (msg: string, kind: ToastKind = 'info') => {
+    setToastMsg(msg);
+    setToastKind(kind);
+    setTimeout(() => setToastMsg(null), 4000);
+  };
+
+  // Tables
   const devCosts: Record<string, number> = {
     Preclinical: 200,
     'Phase I': 50,
@@ -55,7 +61,7 @@ export default function Home() {
     'Phase III': 200,
     NDA: 20,
     Approved: 0,
-  }
+  };
   const baseProbabilities: Record<string, number> = {
     Preclinical: 0.12,
     'Phase I': 0.32,
@@ -63,644 +69,210 @@ export default function Home() {
     'Phase III': 0.4,
     NDA: 0.85,
     Approved: 1.0,
-  }
+  };
 
-  // Mechanism bonus computation encapsulated in a memoized function
+  // Mechanistic multiplier
   const mechanismBonus = useMemo(() => {
-    let bonus = 1.0
-    // potency: lower is better
-    if (potency < 10) bonus += 0.1
-    else if (potency > 100) bonus -= 0.1
-    // selectivity: higher fold selectivity is better
-    if (selectivity > 30) bonus += 0.1
-    else if (selectivity < 5) bonus -= 0.1
-    // half‑life: extreme half‑lives are undesirable
-    if (halfLife > 24) bonus -= 0.05
-    else if (halfLife < 2) bonus -= 0.05
-    // molecular weight: values above ~500 Da often reduce oral bioavailability
-    if (molecularWeight > 500) bonus -= 0.05
-    else if (molecularWeight < 200) bonus += 0.05
-    // logP: ideal lipophilicity between 1 and 3
-    if (logP >= 1 && logP <= 3) bonus += 0.1
-    else bonus -= 0.05
-    // bioavailability: higher is better
-    if (bioavailability > 0.5) bonus += 0.1
-    else if (bioavailability < 0.2) bonus -= 0.1
-    // target validation: strong evidence boosts likelihood
-    if (targetValidation > 0.7) bonus += 0.2
-    else if (targetValidation < 0.3) bonus -= 0.1
-    // target novelty: high novelty penalised; familiarity rewarded
-    if (targetNovelty > 0.7) bonus -= 0.1
-    else if (targetNovelty < 0.3) bonus += 0.1
-    // Clamp between 0.5× and 2.0×
-    return Math.min(2.0, Math.max(0.5, bonus))
-  }, [potency, selectivity, halfLife, molecularWeight, logP, bioavailability, targetValidation, targetNovelty])
+    let bonus = 1.0;
+    if (potency < 10) bonus += 0.1;
+    else if (potency > 100) bonus -= 0.1;
+    if (selectivity > 30) bonus += 0.1;
+    else if (selectivity < 5) bonus -= 0.1;
+    if (halfLife > 24) bonus -= 0.05;
+    else if (halfLife < 2) bonus -= 0.05;
+    if (molecularWeight > 500) bonus -= 0.05;
+    else if (molecularWeight < 200) bonus += 0.05;
+    if (logP >= 1 && logP <= 3) bonus += 0.1;
+    else bonus -= 0.05;
+    if (bioavailability > 0.5) bonus += 0.1;
+    else if (bioavailability < 0.2) bonus -= 0.1;
+    if (targetValidation > 0.7) bonus += 0.2;
+    else if (targetValidation < 0.3) bonus -= 0.1;
+    if (targetNovelty > 0.7) bonus -= 0.1;
+    else if (targetNovelty < 0.3) bonus += 0.1;
+    return Math.min(2.0, Math.max(0.5, bonus));
+  }, [potency, selectivity, halfLife, molecularWeight, logP, bioavailability, targetValidation, targetNovelty]);
 
-  // Derived values
-  const probability = baseProbabilities[phase] ?? 0
-  const devCost = devCosts[phase] ?? 0
-  const devCostPV = devCost * (1 - taxRate)
-  const currentYear = new Date().getFullYear()
+  const probability = baseProbabilities[phase] ?? 0;
+  const devCost = devCosts[phase] ?? 0;
+  const devCostPV = devCost * (1 - taxRate);
+  const currentYear = new Date().getFullYear();
 
-  // Present value of net commercial cash flows assuming success
-  const commercialPV = useMemo(() => {
-    if (launchYear >= loeYear) return 0
-    let pv = 0
-    const netMargin = 1 - cogs - commercialSpend - workingCapital
-    for (let year = launchYear; year < loeYear; year++) {
-      const t = year - currentYear
-      const cashFlow = peakSales * netMargin * (1 - taxRate)
-      pv += cashFlow / Math.pow(1 + discountRate, t)
-    }
-    return pv
-  }, [launchYear, loeYear, cogs, commercialSpend, workingCapital, peakSales, taxRate, discountRate])
+  // Auto PoS calculation
+  useEffect(() => {
+    const base = baseProbabilities[phase] ?? 0;
+    setBaselinePos(base);
+    setMechanisticPos(base * mechanismBonus);
+  }, [phase, mechanismBonus]);
 
-  // Risk adjusted outputs
-  const ptrs = probability * mechanismBonus
-  const rnpv = commercialPV * probability * mechanismBonus - devCostPV
-  const roi = devCostPV !== 0 ? Math.round((rnpv / devCostPV) * 100) : 0
+  // DCF
+  const ownerPV = useMemo(() =>
+    pvOwner({ currentYear, launchYear, loeYear, discountRate, taxRate, peakSales, cogs, commercialSpend, workingCapital }),
+    [currentYear, launchYear, loeYear, discountRate, taxRate, peakSales, cogs, commercialSpend, workingCapital]
+  );
+  const licensorPV = useMemo(() =>
+    pvLicensor({
+      currentYear,
+      launchYear,
+      loeYear,
+      discountRate,
+      taxRate,
+      peakSales,
+      royaltyPctAt: (y) => royaltyAtYear(y, launchYear, loeYear, royaltyMin, royaltyMax, royaltyRampYears),
+      cogs: 0, commercialSpend: 0, workingCapital: 0,
+    }),
+    [currentYear, launchYear, loeYear, discountRate, taxRate, peakSales, royaltyMin, royaltyMax, royaltyRampYears]
+  );
 
-  // Handlers to keep LOE consistent when changing launch year or vice versa
-  const handleLaunchYearChange = (year: number) => {
-    setLaunchYear(year)
-    if (year >= loeYear) setLoeYear(year + 1)
-  }
-  const handleLoeYearChange = (year: number) => {
-    setLoeYear(year)
-    if (year <= launchYear) setLaunchYear(year - 1)
-  }
+  const selectedPV = role === 'OWNER' ? ownerPV : licensorPV;
+  const ptrs = probability * mechanismBonus;
+  const rnpv = selectedPV * ptrs - devCostPV;
+  const roi = devCostPV !== 0 ? Math.round((rnpv / devCostPV) * 100) : 0;
+  const avgRoyalty = useMemo(
+    () => averageRoyalty(launchYear, loeYear, royaltyMin, royaltyMax, royaltyRampYears),
+    [launchYear, loeYear, royaltyMin, royaltyMax, royaltyRampYears]
+  );
 
-  // Helper: gather current inputs
-  const getInputs = () => ({
-    peakSales,
-    launchYear,
-    loeYear,
-    discountRate,
-    taxRate,
-    cogs,
-    commercialSpend,
-    workingCapital,
-    potency,
-    selectivity,
-    halfLife,
-    molecularWeight,
-    logP,
-    bioavailability,
-    targetValidation,
-    targetNovelty,
-    phase,
-    indication,
-  })
-
-  // Helper: gather current outputs
-  const getOutputs = () => ({
-    mechanismBonus,
-    ptrs,
-    devCostPV,
-    commercialPV,
-    rnpv,
-    roi,
-  })
-
-  // --- helpers: LOE & Trial fetchers ---
+  // --- API helpers ---
   const getLoeFromApi = async (name: string) => {
-    const drug = name && name.trim()
-    if (!drug) {
-      alert('Enter a drug name or indication first.')
-      return
-    }
-    try {
-      const res = await fetch(`/api/loe/${encodeURIComponent(drug)}`)
-      const data = await res.json()
-      if (res.ok && typeof data.loeYear === 'number') {
-        setLoeYear(data.loeYear)
-      } else {
-        alert('LOE lookup returned no year.')
-      }
-    } catch {
-      alert('LOE lookup failed. Try again.')
-    }
-  }
+    if (!name?.trim()) return notify('Enter a drug or indication', 'error');
+    const res = await fetch(`/api/loe/${encodeURIComponent(name.trim())}`);
+    const data = await res.json();
+    if (res.ok && data.loeYear) {
+      setLoeYear(data.loeYear);
+      setLoeSource(data.source || null);
+      notify(`LOE set to ${data.loeYear}`, 'success');
+    } else notify('LOE lookup failed', 'error');
+  };
 
-  const getTrialFromApi = async (nct: string) => {
-    const id = nct && nct.trim()
-    if (!id) {
-      alert('Enter an NCT ID first.')
-      return
-    }
-    try {
-      const res = await fetch(`/api/trial/${encodeURIComponent(id)}`)
-      const data = await res.json()
-      if (res.ok) {
-        // Update phase if returned
-        if (data.phase) {
-          setPhase(data.phase)
-          // Update baseline PoS according to the base probabilities
-          setBaselinePos(baseProbabilities[data.phase] ?? 0)
-        }
-        // Optionally update indication or other fields if provided
-        // For example: setIndication(data.sponsor)
-        alert('Trial data loaded.')
-      } else {
-        alert(data?.error ?? 'Trial lookup failed.')
-      }
-    } catch {
-      alert('Trial lookup failed. Try again.')
-    }
-  }
+  const getTrialFromApi = async (id: string) => {
+    if (!id?.trim()) return notify('Enter an NCT ID', 'error');
+    const res = await fetch(`/api/trial/${encodeURIComponent(id.trim())}`);
+    const data = await res.json();
+    if (res.ok) {
+      setTrialSponsor(data.sponsor);
+      setTrialStartDate(data.startDate);
+      if (data.phase) setPhase(data.phase);
+      notify('Trial data updated', 'success');
+    } else notify('Trial lookup failed', 'error');
+  };
 
   const saveValuation = async () => {
-    setSaveError(null)
-    try {
-      const res = await fetch('/api/valuations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          inputs: getInputs(),
-          outputs: getOutputs(),
-          nctId,
-          loeYear,
-          royaltyMin,
-          royaltyMax,
-          baselinePos,
-          mechanisticPos,
-        }),
-      })
-      if (!res.ok) throw new Error(`Failed: ${res.status}`)
-      const data = await res.json()
-      setShareLink(`${window.location.origin}/api/valuation/share/${data.shareSlug}`)
-    } catch (e: any) {
-      setSaveError(e.message || 'Error saving valuation')
-    }
-  }
+    const res = await fetch('/api/valuations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        inputs: {
+          peakSales, launchYear, loeYear, discountRate, taxRate, cogs,
+          commercialSpend, workingCapital, potency, selectivity, halfLife,
+          molecularWeight, logP, bioavailability, targetValidation, targetNovelty,
+          phase, indication, royaltyMin, royaltyMax, royaltyRampYears, role,
+        },
+        outputs: { mechanismBonus, ptrs, devCostPV, ownerPV, licensorPV, rnpv, roi, baselinePos, mechanisticPos },
+        nctId,
+      }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setShareLink(`${window.location.origin}/api/valuation/share/${data.shareSlug}`);
+      notify('Valuation saved', 'success');
+    } else notify('Save failed', 'error');
+  };
 
-  // Load valuation by id or slug
-  const loadValuation = async () => {
-    setLoadError(null)
-    try {
-      const res = await fetch(`/api/valuation/${loadId}`)
-      if (!res.ok) throw new Error(`Failed: ${res.status}`)
-      const data = await res.json()
-      const { inputs } = data
-      setPeakSales(inputs.peakSales)
-      setNctId(data.nctId || '')
-      setLoeYear(data.loeYear || loeYear)
-      setRoyaltyMin(data.royaltyMin || 5)
-      setRoyaltyMax(data.royaltyMax || 12)
-      setBaselinePos(data.baselinePos || 0)
-      setMechanisticPos(data.mechanisticPos || 0)
-      setLaunchYear(inputs.launchYear)
-      setLoeYear(inputs.loeYear)
-      setDiscountRate(inputs.discountRate)
-      setTaxRate(inputs.taxRate)
-      setCogs(inputs.cogs)
-      setCommercialSpend(inputs.commercialSpend)
-      setWorkingCapital(inputs.workingCapital)
-      setPotency(inputs.potency)
-      setSelectivity(inputs.selectivity)
-      setHalfLife(inputs.halfLife)
-      setMolecularWeight(inputs.molecularWeight)
-      setLogP(inputs.logP)
-      setBioavailability(inputs.bioavailability)
-      setTargetValidation(inputs.targetValidation)
-      setTargetNovelty(inputs.targetNovelty)
-      setPhase(inputs.phase)
-      setIndication(inputs.indication)
-      setShareLink(`${window.location.origin}/api/valuation/share/${data.shareSlug}`)
-    } catch (e: any) {
-      setLoadError(e.message || 'Error loading valuation')
-    }
-  }
+  const loadValuation = async (id: string) => {
+    if (!id.trim()) return notify('Enter an ID or slug', 'error');
+    const res = await fetch(`/api/valuation/${encodeURIComponent(id.trim())}`);
+    const data = await res.json();
+    if (!res.ok) return notify('Load failed', 'error');
+    const { inputs } = data;
+    setPeakSales(inputs.peakSales);
+    setLaunchYear(inputs.launchYear);
+    setLoeYear(inputs.loeYear);
+    setDiscountRate(inputs.discountRate);
+    setTaxRate(inputs.taxRate);
+    setCogs(inputs.cogs);
+    setCommercialSpend(inputs.commercialSpend);
+    setWorkingCapital(inputs.workingCapital);
+    setPhase(inputs.phase);
+    setIndication(inputs.indication);
+    setRole(inputs.role || 'OWNER');
+    setRoyaltyMin(inputs.royaltyMin);
+    setRoyaltyMax(inputs.royaltyMax);
+    setRoyaltyRampYears(inputs.royaltyRampYears);
+    notify('Valuation loaded', 'success');
+  };
 
-  // Export current valuation as JSON file
-  const exportJSON = () => {
-    const blob = new Blob([
-      JSON.stringify({ inputs: getInputs(), outputs: getOutputs() }, null, 2),
-    ], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `valuation_${Date.now()}.json`
-    link.click()
-    URL.revokeObjectURL(url)
-  }
-
-  // Export current valuation as CSV file
-  const exportCSV = () => {
-    const inputs = getInputs()
-    const outputs = getOutputs()
-    const rows = [[
-      new Date().toISOString(),
-      inputs.phase,
-      inputs.indication,
-      inputs.peakSales,
-      inputs.launchYear,
-      inputs.loeYear,
-      inputs.discountRate,
-      inputs.taxRate,
-      inputs.cogs,
-      inputs.commercialSpend,
-      inputs.workingCapital,
-      inputs.potency,
-      inputs.selectivity,
-      inputs.halfLife,
-      inputs.molecularWeight,
-      inputs.logP,
-      inputs.bioavailability,
-      inputs.targetValidation,
-      inputs.targetNovelty,
-      outputs.mechanismBonus,
-      outputs.ptrs,
-      outputs.devCostPV,
-      outputs.commercialPV,
-      outputs.rnpv,
-      outputs.roi,
-    ]]
-    const header = [
-      'timestamp',
-      'phase',
-      'indication',
-      'peakSales',
-      'launchYear',
-      'loeYear',
-      'discountRate',
-      'taxRate',
-      'cogs',
-      'commercialSpend',
-      'workingCapital',
-      'potency',
-      'selectivity',
-      'halfLife',
-      'molecularWeight',
-      'logP',
-      'bioavailability',
-      'targetValidation',
-      'targetNovelty',
-      'mechanismBonus',
-      'ptrs',
-      'devCostPV',
-      'commercialPV',
-      'rnpv',
-      'roi',
-    ]
-    const csvContent = [header, ...rows].map(row => row.join(',')).join('\n')
-    const blob2 = new Blob([csvContent], { type: 'text/csv' })
-    const url2 = URL.createObjectURL(blob2)
-    const link2 = document.createElement('a')
-    link2.href = url2
-    link2.download = `valuation_${Date.now()}.csv`
-    link2.click()
-    URL.revokeObjectURL(url2)
-  }
-
+  // UI ------------------------------------------------------------------------
   return (
-    <main style={{ padding: '2rem', maxWidth: '900px', margin: '0 auto', fontFamily: 'sans-serif' }}>
+    <main style={{ padding: '2rem', maxWidth: '980px', margin: '0 auto', fontFamily: 'sans-serif' }}>
       <h1 style={{ fontSize: '2rem', marginBottom: '1rem' }}>Drug Valuation Tool</h1>
-      <p style={{ marginBottom: '1rem' }}>
-        Adjust the inputs below to see how phase, commercial assumptions and mechanistic
-        properties impact the risk‑adjusted net present value (rNPV), probability ×
-        mechanism score (PTRS), ROI and other metrics. All monetary values are in
-        millions.
-      </p>
+      {toastMsg && (
+        <div style={{ marginBottom: '0.75rem' }}>
+          <Toast message={toastMsg} kind={toastKind} />
+        </div>
+      )}
 
-      {/* Phase and indication */}
+      <section style={{ marginBottom: '1rem' }}>
+        <strong>Mode:</strong>{' '}
+        <label><input type="radio" checked={role === 'OWNER'} onChange={() => setRole('OWNER')} /> Owner</label>{' '}
+        <label><input type="radio" checked={role === 'LICENSOR'} onChange={() => setRole('LICENSOR')} /> Licensor</label>
+      </section>
+
       <section style={{ marginBottom: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
         <div>
-          <label htmlFor="phase">Phase</label>
-          <select id="phase" value={phase} onChange={(e) => setPhase(e.target.value)} style={{ width: '100%', padding: '0.4rem' }}>
+          <label>Phase</label>
+          <select value={phase} onChange={(e) => setPhase(e.target.value)} style={{ width: '100%' }}>
             {Object.keys(devCosts).map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
         </div>
         <div>
-          <label htmlFor="indication">Indication</label>
-          <select id="indication" value={indication} onChange={(e) => setIndication(e.target.value)} style={{ width: '100%', padding: '0.4rem' }}>
-            <option value="Oncology">Oncology</option>
-            <option value="Rare Disease">Rare Disease</option>
-            <option value="Cardiovascular">Cardiovascular</option>
-            <option value="Neurology">Neurology</option>
-            <option value="Other">Other</option>
+          <label>Indication</label>
+          <select value={indication} onChange={(e) => setIndication(e.target.value)} style={{ width: '100%' }}>
+            <option>Oncology</option>
+            <option>Cardiovascular</option>
+            <option>Rare Disease</option>
+            <option>Neurology</option>
           </select>
         </div>
       </section>
 
-      {/* Financial inputs */}
+      {/* Financial Inputs */}
       <section style={{ marginBottom: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-        <div>
-          <label htmlFor="peakSales">Peak annual sales (M)</label>
-          <input
-            id="peakSales"
-            type="number"
-            min="0"
-            value={peakSales}
-            onChange={(e) => setPeakSales(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-        <div>
-          <label htmlFor="launchYear">Launch year</label>
-          <input
-            id="launchYear"
-            type="number"
-            min={currentYear}
-            value={launchYear}
-            onChange={(e) => handleLaunchYearChange(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-        <div>
-          <label htmlFor="loeYear">LOE year</label>
-          <input
-            id="loeYear"
-            type="number"
-            min={launchYear + 1}
-            value={loeYear}
-            onChange={(e) => handleLoeYearChange(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-          <button
-            type="button"
-            onClick={() => getLoeFromApi(indication)}
-            style={{ marginTop: '0.5rem', padding: '0.4rem' }}
-          >
-            Get LOE
-          </button>
-        </div>
-        <div>
-          <label htmlFor="discountRate">Discount rate</label>
-          <input
-            id="discountRate"
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            value={discountRate}
-            onChange={(e) => setDiscountRate(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-        <div>
-          <label htmlFor="taxRate">Tax rate</label>
-          <input
-            id="taxRate"
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            value={taxRate}
-            onChange={(e) => setTaxRate(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-        <div>
-          <label htmlFor="cogs">COGS (fraction of sales)</label>
-          <input
-            id="cogs"
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            value={cogs}
-            onChange={(e) => setCogs(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-        <div>
-          <label htmlFor="commercialSpend">Commercial spend (fraction of sales)</label>
-          <input
-            id="commercialSpend"
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            value={commercialSpend}
-            onChange={(e) => setCommercialSpend(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-        <div>
-          <label htmlFor="workingCapital">Working capital burden</label>
-          <input
-            id="workingCapital"
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            value={workingCapital}
-            onChange={(e) => setWorkingCapital(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-        <div>
-          <label>NCT ID</label>
-          <input
-            type="text"
-            value={nctId}
-            onChange={(e) => setNctId(e.target.value)}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-          <button
-            type="button"
-            onClick={() => getTrialFromApi(nctId)}
-            style={{ marginTop: '0.5rem', padding: '0.4rem' }}
-          >
-            Fetch Trial
-          </button>
-        </div>
-        <div>
-          <label>Royalty Min (%)</label>
-          <input
-            type="number"
-            value={royaltyMin}
-            onChange={(e) => setRoyaltyMin(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-        <div>
-          <label>Royalty Max (%)</label>
-          <input
-            type="number"
-            value={royaltyMax}
-            onChange={(e) => setRoyaltyMax(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-        <div>
-          <label>Baseline PoS</label>
-          <input
-            type="number"
-            value={baselinePos}
-            onChange={(e) => setBaselinePos(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-        <div>
-          <label>Mechanistic PoS</label>
-          <input
-            type="number"
-            value={mechanisticPos}
-            onChange={(e) => setMechanisticPos(Number(e.target.value))}
-            style={{ width: '100%', padding: '0.4rem' }}
-          />
-        </div>
-      </section>
-
-      {/* Mechanistic inputs */}
-      <section style={{ marginBottom: '1rem' }}>
-        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Mechanistic Properties</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-          <div>
-            <label htmlFor="potency">Potency (IC50 nM)</label>
-            <input
-              id="potency"
-              type="number"
-              min="1"
-              value={potency}
-              onChange={(e) => setPotency(Number(e.target.value))}
-              style={{ width: '100%', padding: '0.4rem' }}
-            />
-          </div>
-          <div>
-            <label htmlFor="selectivity">Selectivity (fold)</label>
-            <input
-              id="selectivity"
-              type="number"
-              min="1"
-              value={selectivity}
-              onChange={(e) => setSelectivity(Number(e.target.value))}
-              style={{ width: '100%', padding: '0.4rem' }}
-            />
-          </div>
-          <div>
-            <label htmlFor="halfLife">Half‑life (hr)</label>
-            <input
-              id="halfLife"
-              type="number"
-              min="0"
-              value={halfLife}
-              onChange={(e) => setHalfLife(Number(e.target.value))}
-              style={{ width: '100%', padding: '0.4rem' }}
-            />
-          </div>
-          <div>
-            <label htmlFor="molecularWeight">Molecular weight (Da)</label>
-            <input
-              id="molecularWeight"
-              type="number"
-              min="0"
-              value={molecularWeight}
-              onChange={(e) => setMolecularWeight(Number(e.target.value))}
-              style={{ width: '100%', padding: '0.4rem' }}
-            />
-          </div>
-          <div>
-            <label htmlFor="logP">LogP</label>
-            <input
-              id="logP"
-              type="number"
-              step="0.1"
-              value={logP}
-              onChange={(e) => setLogP(Number(e.target.value))}
-              style={{ width: '100%', padding: '0.4rem' }}
-            />
-          </div>
-          <div>
-            <label htmlFor="bioavailability">Bioavailability (0–1)</label>
-            <input
-              id="bioavailability"
-              type="number"
-              min="0"
-              max="1"
-              step="0.01"
-              value={bioavailability}
-              onChange={(e) => setBioavailability(Number(e.target.value))}
-              style={{ width: '100%', padding: '0.4rem' }}
-            />
-          </div>
-          <div>
-            <label htmlFor="targetValidation">Target validation (0–1)</label>
-            <input
-              id="targetValidation"
-              type="number"
-              min="0"
-              max="1"
-              step="0.01"
-              value={targetValidation}
-              onChange={(e) => setTargetValidation(Number(e.target.value))}
-              style={{ width: '100%', padding: '0.4rem' }}
-            />
-          </div>
-          <div>
-            <label htmlFor="targetNovelty">Target novelty (0–1)</label>
-            <input
-              id="targetNovelty"
-              type="number"
-              min="0"
-              max="1"
-              step="0.01"
-              value={targetNovelty}
-              onChange={(e) => setTargetNovelty(Number(e.target.value))}
-              style={{ width: '100%', padding: '0.4rem' }}
-            />
-          </div>
-        </div>
+        <div><label>Peak sales (M)</label><input type="number" value={peakSales} onChange={(e) => setPeakSales(+e.target.value)} /></div>
+        <div><label>Launch year</label><input type="number" value={launchYear} onChange={(e) => setLaunchYear(+e.target.value)} /></div>
+        <div><label>LOE year</label><input type="number" value={loeYear} onChange={(e) => setLoeYear(+e.target.value)} /></div>
+        <div><button onClick={() => getLoeFromApi(indication)}>Get LOE</button></div>
       </section>
 
       {/* Outputs */}
       <section style={{ marginBottom: '1rem' }}>
-        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Outputs</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-          <div><strong>Mechanism Bonus:</strong> {mechanismBonus.toFixed(2)}</div>
-          <div><strong>PTRS:</strong> {ptrs.toFixed(2)}</div>
-          <div><strong>Dev cost PV (after tax):</strong> ${Math.round(devCostPV)}M</div>
-          <div><strong>Commercial PV (given success):</strong> ${Math.round(commercialPV)}M</div>
-          <div><strong>rNPV:</strong> ${Math.round(rnpv)}M</div>
-          <div><strong>ROI:</strong> {roi}%</div>
-        </div>
+        <h2>Outputs</h2>
+        <p>Baseline PoS: {(baselinePos * 100).toFixed(1)}%</p>
+        <p>Mechanistic PoS: {(mechanisticPos * 100).toFixed(1)}%</p>
+        <p>Mechanism Bonus: {mechanismBonus.toFixed(2)}</p>
+        <p>PTRS: {ptrs.toFixed(2)}</p>
+        <p>rNPV: ${Math.round(rnpv)}M</p>
+        <p>ROI: {roi}%</p>
+        <p>Owner PV: ${Math.round(ownerPV)}M</p>
+        <p>Licensor PV: ${Math.round(licensorPV)}M</p>
+        <p>Avg Royalty: {avgRoyalty.toFixed(2)}%</p>
       </section>
 
-      {/* Save, load, share & export */}
-      <section style={{ marginBottom: '1rem' }}>
-        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Save, Load, Share & Export</h2>
-        <div style={{ marginBottom: '0.5rem' }}>
-          <button onClick={saveValuation} style={{ padding: '0.4rem', marginRight: '0.5rem' }}>
-            Save Valuation
-          </button>
-          {saveError && <span style={{ color: 'red' }}>{saveError}</span>}
-        </div>
+      {/* Actions */}
+      <section>
+        <h3>Save / Load</h3>
+        <button onClick={saveValuation}>Save Valuation</button>
         {shareLink && (
-          <div style={{ marginBottom: '0.5rem' }}>
-            <span><strong>Share URL:</strong> </span>
-            <a href={shareLink} target="_blank" rel="noopener noreferrer">{shareLink}</a>
-          </div>
+          <p>
+            <strong>Share link:</strong>{' '}
+            <a href={shareLink} target="_blank">{shareLink}</a>
+          </p>
         )}
-        <div style={{ marginBottom: '0.5rem' }}>
-          <input
-            type="text"
-            placeholder="Enter ID or slug"
-            value={loadId}
-            onChange={(e) => setLoadId(e.target.value)}
-            style={{ padding: '0.4rem', marginRight: '0.5rem' }}
-          />
-          <button onClick={loadValuation} style={{ padding: '0.4rem' }}>
-            Load Valuation
-          </button>
-          {loadError && <span style={{ color: 'red' }}>{loadError}</span>}
-        </div>
-        <div>
-          <button onClick={exportJSON} style={{ padding: '0.4rem', marginRight: '0.5rem' }}>
-            Export JSON
-          </button>
-          <button onClick={exportCSV} style={{ padding: '0.4rem' }}>Export CSV</button>
-        </div>
+        <input placeholder="Enter ID or slug" value={nctId} onChange={(e) => setNctId(e.target.value)} />
+        <button onClick={() => loadValuation(nctId)}>Load Valuation</button>
       </section>
-
-      <p style={{ fontSize: '0.9rem', color: '#666' }}>
-        Note: All numbers are illustrative and simplified. Users should adjust assumptions
-        to reflect specific assets. ROI is calculated as rNPV divided by the present
-        value of development costs.
-      </p>
     </main>
-  )
+  );
 }

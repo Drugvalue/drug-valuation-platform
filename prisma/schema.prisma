@@ -1,5 +1,3 @@
-// Prisma schema for DrugValue
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,48 +7,9 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id          Int          @id @default(autoincrement())
-  email       String       @unique
-  createdAt   DateTime     @default(now())
-  valuations  Valuation[]
-}
-
-model Drug {
-  id          Int          @id @default(autoincrement())
-  name        String
-  indication  String
-  phase       String
-  mechanism   String?
-  createdAt   DateTime     @default(now())
-  valuations  Valuation[]
-
-  @@index([name])
-  @@index([indication])
-}
-
 model Valuation {
-  id            Int       @id @default(autoincrement())
-  userId        Int?
-  drugId        Int?
-  inputs        Json
-  metadata Json?
-  updatedAt DateTime @updatedAt @default(now())
-  outputs       Json
-    nctId String?
-  loeYear Int?
-  royaltyMin Float?
-  royaltyMax Float?
-  baselinePos Float?
-  mechanisticPos Float?
-mechanismNote String?   // optional free-text notes
-  shareSlug     String    @unique
-  createdAt     DateTime  @default(now())
-
-  user   User?  @relation(fields: [userId], references: [id])
-  drug   Drug?  @relation(fields: [drugId], references: [id])
-
-  @@index([createdAt])
-  @@index([drugId])
-  @@index([userId])
+  id        String   @id
+  shareSlug String   @unique
+  createdAt DateTime @default(now())
+  payload   Json
 }
